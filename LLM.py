@@ -1,3 +1,4 @@
+#setting the environment and libraries
 import pandas as pd
 import transformers
 from datasets import load_dataset
@@ -6,6 +7,7 @@ from peft import prepare_model_for_kbit_training
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM, BitsAndBytesConfig
 
+# loading base model and tokenizer >> preparing quantized model for training 
 model_id = "HuggingFaceH4/zephyr-7b-beta"
 bnb_config = BitsAndBytesConfig(
     load_in_4bit=True,
@@ -19,12 +21,11 @@ model = AutoModelForCausalLM.from_pretrained(
     model_id, quantization_config=bnb_config, device_map={"": 0}
 )
 
-
 model.gradient_checkpointing_enable()
 model = prepare_model_for_kbit_training(model)
 
-
-def print_trainable_parameters(model):
+# finding the parameters within the model -> Freeze un-desired parameters >> Paramtere efficient fine-tunning
+def print_trainable_parameters(model): 
     """
     Prints the number of trainable parameters in the model.
     """
@@ -38,7 +39,6 @@ def print_trainable_parameters(model):
         f"trainable params: {trainable_params} || all params: {all_param} || trainable%: {100 * trainable_params / all_param}"
     )
 
-
 config = LoraConfig(
     r=8,
     lora_alpha=32,
@@ -51,12 +51,11 @@ config = LoraConfig(
 model = get_peft_model(model, config)
 print_trainable_parameters(model)
 
-
+# loading data for training 
 data = load_dataset("Moreza009/Internal_validation")
 data = data.map(
     lambda samples: tokenizer(samples["patient medical hidtory"]), batched=True
 )
-
 
 def merge_columns(example):
     example["prediction"] = (
@@ -70,7 +69,6 @@ def merge_columns(example):
 
 data["train"] = data["train"].map(merge_columns)
 data["train"]["prediction"][:5]
-
 
 # needed for gpt-neo-x tokenizer
 tokenizer.pad_token = tokenizer.eos_token
@@ -96,7 +94,7 @@ trainer = transformers.Trainer(
 model.config.use_cache = False
 trainer.train()
 
-
+# Finding the performance on the internal test set using the pre-trained model
 def merge_columns(example):
     example["prediction"] = (
         "does the patient survive or die based on the provided medical history? patient history is : "
@@ -106,18 +104,15 @@ def merge_columns(example):
     )
     return example
 
-
 data["test"] = data["test"].map(merge_columns)
-data["test"]["prediction"][:5]
 
+y_pred = [] # !!!
+for i in data["test"]["prediction"]: # !!!
+    device = "cuda:0" # !!!
 
-y_pred = []
-for i in data["test"]["prediction"]:
-    device = "cuda:0"
-
-    inputs = tokenizer(i, return_tensors="pt").to(device)
-    outputs = model.generate(**inputs, max_new_tokens=1)
-    if "survives" in (tokenizer.decode(outputs[0], skip_special_tokens=True)):
+    inputs = tokenizer(i, return_tensors="pt").to(device) 
+    outputs = model.generate(**inputs, max_new_tokens=1) 
+    if "survives" in (tokenizer.decode(outputs[0], skip_special_tokens=True)): 
         y_pred.append(1)
     else:
         y_pred.append(0)
